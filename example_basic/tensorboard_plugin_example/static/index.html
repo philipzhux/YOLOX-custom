@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>PyTorch Training Control</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      background-color: #F6F6F6;
+    }
+    .container {
+      background: #fff;
+      padding: 20px;
+      border-radius: 5px;
+      margin: auto;
+      width: 600px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.2);
+    }
+    h1 {
+      color: #333;
+    }
+    .btn {
+      background: #007bff;
+      color: #fff;
+      border: none;
+      padding: 10px 15px;
+      margin-right: 10px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .btn:hover {
+      background: #0056b3;
+    }
+    .batch-size-section {
+      margin-top: 20px;
+    }
+    label {
+      font-weight: bold;
+      margin-right: 5px;
+    }
+    input[type="number"] {
+      width: 60px;
+      padding: 5px;
+      margin-right: 5px;
+    }
+    #statusMsg {
+      margin-top: 20px;
+      font-weight: bold;
+      color: green;
+    }
+    /* Styling for logs section (optional) */
+    #logs {
+      margin-top: 20px;
+      padding: 10px;
+      background: #272727;
+      color: #f1f1f1;
+      height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>PyTorch Training Control</h1>
+    <div>
+      <!-- Attach IDs for JS -->
+      <button class="btn" id="startBtn">Start Training</button>
+      <button class="btn" id="stopBtn">Stop Training</button>
+    </div>
+    <div class="batch-size-section">
+      <label for="batchSizeInput">Batch Size:</label>
+      <input type="number" id="batchSizeInput" value="32" min="1" />
+      <button class="btn" id="updateBatchSizeBtn">Update</button>
+    </div>
+    <div id="statusMsg"></div>
+
+    <!-- Optional logs div if you want to place it here directly -->
+    <div id="logs"></div>
+  </div>
+</body>
+</html>

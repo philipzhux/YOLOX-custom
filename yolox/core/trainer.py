@@ -62,7 +62,7 @@ class Trainer:
         # metric record
         self.meter = MeterBuffer(window_size=exp.print_interval)
         self.file_name = os.path.join(exp.output_dir, args.experiment_name)
-        
+
         # Check environment variable "COMPUTE_TPR"
         self.compute_tpr_flag = False
         # self.compute_tpr_flag = (os.getenv("COMPUTE_TPR", "0") == "1")
@@ -134,7 +134,7 @@ class Trainer:
             self.model.train()
             tpr_value = self.compute_tpr_stub(batch_predictions, targets)
         iter_end_time = time.time()
-        
+
         # optionally log tpr value
         if tpr_value is not None:
             outputs["tpr"] = tpr_value
@@ -387,7 +387,7 @@ class Trainer:
                     fairness = min(recall_by_class.values())/max(recall_by_class.values())+1e-9
                     logger.info(f"\nFairness @epoch{self.epoch + 1} is {fairness}.")
                     self.tblogger.add_scalar(f"val/fairness", fairness, self.epoch + 1)
-                    
+
             if self.args.logger == "wandb":
                 self.wandb_logger.log_metrics({
                     "val/COCOAP50": ap50,
@@ -403,7 +403,7 @@ class Trainer:
                     "train/epoch": self.epoch + 1,
                 }
                 self.mlflow_logger.on_log(self.args, self.exp, self.epoch+1, logs)
-            
+
             logger.info("\n" + summary["info"] if (type(summary) is dict and "info" in summary) else str(summary))
         synchronize()
 
@@ -458,7 +458,7 @@ class Trainer:
     def compute_tpr_stub(self, predictions, targets, iou_thresh=0.5, conf_thresh=0.5):
         """
         Compute batch-level TPR given YOLOX-style decoded predictions and GT targets.
-        
+
         Args:
             predictions (Tensor): shape (B, N, 5 + num_classes)
                 For each batch element b:
@@ -534,7 +534,7 @@ class Trainer:
             # Let's assume M is the number of valid GT for this image:
             # Or YOLOX often uses nlabel to find how many are valid
             valid_gt_mask = (gt_b[:, 1:].sum(dim=1) > 0)
-            gt_b = gt_b[valid_gt_mask]  
+            gt_b = gt_b[valid_gt_mask]
             if gt_b.numel() == 0:
                 # No GT => no TPs, no FNs
                 continue
@@ -548,7 +548,7 @@ class Trainer:
             # We'll do a "greedy" approach: for each GT box,
             # if there's any pred box with IoU >= iou_thresh, we call it a TP.
             # (You could do more advanced matching if desired.)
-            ious = bboxes_iou(gt_bboxes_xyxy, pred_bboxes_xyxy, xyxy=True)  
+            ious = bboxes_iou(gt_bboxes_xyxy, pred_bboxes_xyxy, xyxy=True)
             # ious: shape (n_gt, n_pred)
 
             # For each GT, see if any pred hits iou_thresh
