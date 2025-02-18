@@ -92,6 +92,7 @@ class COCOEvaluator:
         testdev: bool = False,
         per_class_AP: bool = True,
         per_class_AR: bool = True,
+        get_apr: bool = False
     ):
         """
         Args:
@@ -112,6 +113,7 @@ class COCOEvaluator:
         self.testdev = testdev
         self.per_class_AP = per_class_AP
         self.per_class_AR = per_class_AR
+        self.get_apr = get_apr
 
     def evaluate(
         self, model, distributed=False, half=False, trt_file=None,
@@ -312,6 +314,23 @@ class COCOEvaluator:
             if self.per_class_AR:
                 AR_table = per_class_AR_table(cocoEval, class_names=cat_names)
                 info += "per class AR:\n" + AR_table + "\n"
+            recall_by_class = {}
+            recalls = cocoEval.eval["recall"]
+            # dimension of recalls: [TxKxAxM]
+            # recall has dims (iou, cls, area range, max dets)
+            assert len(cat_names) == recalls.shape[1]
+
+            for idx, name in enumerate(cat_names):
+                recall = recalls[:, idx, 0, -1]
+                recall = recall[recall > -1]
+                ar = np.mean(recall) if recall.size else float("nan")
+                recall_by_class[name] = float(ar * 100)
+            
+            if self.get_apr:
+                return cocoEval.stats[0], cocoEval.stats[1], {
+                    "info": info,
+                    "apr": recall_by_class
+                }
             return cocoEval.stats[0], cocoEval.stats[1], info
         else:
             return 0, 0, info

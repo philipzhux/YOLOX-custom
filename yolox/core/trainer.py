@@ -30,7 +30,9 @@ from yolox.utils import (
     occupy_mem,
     save_checkpoint,
     setup_logger,
-    synchronize
+    synchronize,
+    bboxes_iou,
+    cxcywh2xyxy
 )
 
 
@@ -60,6 +62,10 @@ class Trainer:
         # metric record
         self.meter = MeterBuffer(window_size=exp.print_interval)
         self.file_name = os.path.join(exp.output_dir, args.experiment_name)
+        
+        # Check environment variable "COMPUTE_TPR"
+        self.compute_tpr_flag = False
+        # self.compute_tpr_flag = (os.getenv("COMPUTE_TPR", "0") == "1")
 
         if self.rank == 0:
             os.makedirs(self.file_name, exist_ok=True)
@@ -105,7 +111,7 @@ class Trainer:
 
         with torch.cuda.amp.autocast(enabled=self.amp_training):
             outputs = self.model(inps, targets)
-
+        # print(outputs.keys())
         loss = outputs["total_loss"]
 
         self.optimizer.zero_grad()
@@ -119,8 +125,19 @@ class Trainer:
         lr = self.lr_scheduler.update_lr(self.progress_in_iter + 1)
         for param_group in self.optimizer.param_groups:
             param_group["lr"] = lr
-
+        tpr_value = None
+        if self.compute_tpr_flag:
+            # temporarily switch to eval so model returns decoded boxes
+            self.model.eval()
+            with torch.no_grad(), torch.cuda.amp.autocast(enabled=self.amp_training):
+                batch_predictions = self.model(inps)
+            self.model.train()
+            tpr_value = self.compute_tpr_stub(batch_predictions, targets)
         iter_end_time = time.time()
+        
+        # optionally log tpr value
+        if tpr_value is not None:
+            outputs["tpr"] = tpr_value
         self.meter.update(
             iter_time=iter_end_time - iter_start_time,
             data_time=data_end_time - iter_start_time,
@@ -282,6 +299,7 @@ class Trainer:
                 if self.args.logger == "tensorboard":
                     self.tblogger.add_scalar(
                         "train/lr", self.meter["lr"].latest, self.progress_in_iter)
+                    # print(self.meter.keys())
                     for k, v in loss_meter.items():
                         self.tblogger.add_scalar(
                             f"train/{k}", v.latest, self.progress_in_iter)
@@ -355,7 +373,6 @@ class Trainer:
             (ap50_95, ap50, summary), predictions = self.exp.eval(
                 evalmodel, self.evaluator, self.is_distributed, return_outputs=True
             )
-
         update_best_ckpt = ap50_95 > self.best_ap
         self.best_ap = max(self.best_ap, ap50_95)
 
@@ -363,6 +380,14 @@ class Trainer:
             if self.args.logger == "tensorboard":
                 self.tblogger.add_scalar("val/COCOAP50", ap50, self.epoch + 1)
                 self.tblogger.add_scalar("val/COCOAP50_95", ap50_95, self.epoch + 1)
+                if type(summary) is dict and "apr" in summary:
+                    recall_by_class = summary["apr"]
+                    for cls_name in recall_by_class:
+                        self.tblogger.add_scalar(f"val/APR_{cls_name}", recall_by_class[cls_name], self.epoch + 1)
+                    fairness = min(recall_by_class.values())/max(recall_by_class.values())+1e-9
+                    logger.info(f"\nFairness @epoch{self.epoch + 1} is {fairness}.")
+                    self.tblogger.add_scalar(f"val/fairness", fairness, self.epoch + 1)
+                    
             if self.args.logger == "wandb":
                 self.wandb_logger.log_metrics({
                     "val/COCOAP50": ap50,
@@ -378,7 +403,8 @@ class Trainer:
                     "train/epoch": self.epoch + 1,
                 }
                 self.mlflow_logger.on_log(self.args, self.exp, self.epoch+1, logs)
-            logger.info("\n" + summary)
+            
+            logger.info("\n" + summary["info"] if (type(summary) is dict and "info" in summary) else str(summary))
         synchronize()
 
         self.save_ckpt("last_epoch", update_best_ckpt, ap=ap50_95)
@@ -426,3 +452,120 @@ class Trainer:
                         "curr_ap": ap
                     }
                 )
+
+
+
+    def compute_tpr_stub(self, predictions, targets, iou_thresh=0.5, conf_thresh=0.5):
+        """
+        Compute batch-level TPR given YOLOX-style decoded predictions and GT targets.
+        
+        Args:
+            predictions (Tensor): shape (B, N, 5 + num_classes)
+                For each batch element b:
+                    predictions[b, :, :4]  = [cx, cy, w, h]
+                    predictions[b, :, 4]   = obj_conf
+                    predictions[b, :, 5:]  = cls_conf for each class
+            targets (Tensor): shape (B, M, 5)
+                For each batch element b:
+                    targets[b, m, 0] = class_id
+                    targets[b, m, 1:] = [cx, cy, w, h]
+            iou_thresh (float): minimum IoU to count as TP
+            conf_thresh (float): minimum confidence to filter predictions
+
+        Returns:
+            float: TPR = TP / (TP + FN) across the entire batch.
+        """
+        device = predictions.device
+        batch_size = predictions.shape[0]
+        total_tp = 0
+        total_fn = 0
+
+        for b in range(batch_size):
+            # ------------------------------------------
+            # (1) Get the predictions for image b
+            # ------------------------------------------
+            preds_b = predictions[b]  # shape: (N, 5 + num_classes)
+            if preds_b.numel() == 0:
+                # if no predictions at all
+                gt_b = targets[b]  # shape: (M, 5)
+                num_gts_b = (gt_b[:, 1:].sum(dim=1) > 0).sum().item()  # or just M if your data is well-formed
+                total_fn += num_gts_b
+                continue
+
+            # Separate out boxes and confidences
+            # 4 coords: [cx, cy, w, h]
+            pred_bboxes_cxcywh = preds_b[:, 0:4]
+            obj_conf = preds_b[:, 4]  # shape: (N,)
+
+            # If you want class-agnostic confidence:
+            if preds_b.shape[1] > 5:
+                cls_conf = preds_b[:, 5:]  # shape: (N, num_classes)
+                max_cls_conf, _ = cls_conf.max(dim=-1)  # shape: (N,)
+                final_conf = obj_conf * max_cls_conf
+            else:
+                # If there's no separate class scores, just use obj_conf:
+                final_conf = obj_conf
+
+            # ------------------------------------------
+            # (2) Filter out low-confidence predictions
+            # ------------------------------------------
+            keep_mask = final_conf >= conf_thresh
+            if keep_mask.sum() == 0:
+                # All preds are below confidence threshold
+                gt_b = targets[b]
+                num_gts_b = (gt_b[:, 1:].sum(dim=1) > 0).sum().item()
+                total_fn += num_gts_b
+                continue
+
+            pred_bboxes_cxcywh = pred_bboxes_cxcywh[keep_mask]
+            final_conf = final_conf[keep_mask]
+
+            # ------------------------------------------
+            # (3) Convert predicted bboxes from cx,cy,w,h -> x1,y1,x2,y2
+            # ------------------------------------------
+            pred_bboxes_xyxy = cxcywh2xyxy(pred_bboxes_cxcywh)
+
+            # ------------------------------------------
+            # (4) Prepare GT bboxes
+            # ------------------------------------------
+            gt_b = targets[b]  # shape (M, 5) => [class_id, cx, cy, w, h]
+            # Filter out any zero row if your dataset can have empty boxes
+            # Otherwise, assume all are valid if M>0
+            # Let's assume M is the number of valid GT for this image:
+            # Or YOLOX often uses nlabel to find how many are valid
+            valid_gt_mask = (gt_b[:, 1:].sum(dim=1) > 0)
+            gt_b = gt_b[valid_gt_mask]  
+            if gt_b.numel() == 0:
+                # No GT => no TPs, no FNs
+                continue
+
+            gt_bboxes_cxcywh = gt_b[:, 1:5]
+            gt_bboxes_xyxy = cxcywh2xyxy(gt_bboxes_cxcywh)
+
+            # ------------------------------------------
+            # (5) Match GT boxes with predicted boxes
+            # ------------------------------------------
+            # We'll do a "greedy" approach: for each GT box,
+            # if there's any pred box with IoU >= iou_thresh, we call it a TP.
+            # (You could do more advanced matching if desired.)
+            ious = bboxes_iou(gt_bboxes_xyxy, pred_bboxes_xyxy, xyxy=True)  
+            # ious: shape (n_gt, n_pred)
+
+            # For each GT, see if any pred hits iou_thresh
+            max_ious, _ = ious.max(dim=1)  # shape (n_gt,)
+            # A GT is "matched" if max IoU >= iou_thresh
+            matched = (max_ious >= iou_thresh)
+            tp_b = matched.sum().item()
+            fn_b = (matched == False).sum().item()
+
+            total_tp += tp_b
+            total_fn += fn_b
+
+        # ------------------------------------------
+        # (6) Compute TPR across the entire batch
+        # ------------------------------------------
+        if (total_tp + total_fn) == 0:
+            # e.g. batch had no GT objects
+            return 0.0
+        tpr = total_tp / (total_tp + total_fn)
+        return float(tpr)
