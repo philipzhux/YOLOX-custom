@@ -1,6 +1,7 @@
-# FAI Interactive PlugIN
+# FAI Interactive PlugIn
 ## Introduction
 The TensorBoard Plugin in YOLOX(current) for metrics monitoring and interactive learning. (Updated later on the codes)
+
 In modern machine learning, interactive learning with multiple fairness metrics can significantly benefit both researchers and industry professionals in developing more equitable classifiers and models. By providing real-time insights and visualizations, such tools enable users to monitor fairness-related disparities during training, facilitating more informed decision-making. This project introduces a TensorBoard plugin designed to visualize fairness in ML models, starting with YOLOX and extending to broader applications. By integrating fairness metrics into the training workflow, this tool empowers users to identify and mitigate biases, ultimately fostering the development of fairer AI systems.
 
 #### YOLOX
@@ -8,6 +9,49 @@ YOLOX is an anchor-free version of YOLO, with a simpler design (but better perfo
 
 
 ## Quick Start
+Below shows a prospective finished overlook of our plugin.
+
+<img src="assets/overview.png" width="1000" >
+
+It have many aspect, like Visualization, Data/Token showing, HyperParameter Tuning, Basic interactive tab(Batch, LR, Pause, etc), Terminal tabs.
+
+Note: the data/token may show only just few raondomly insetad of all the tokens.
+
+
+### For TensorBoard Plugin
+
+<details>
+<summary>Ways to connected to Hipergator Node</summary>
+
+We recomand to use the A100 instead of other GPU, which may causeing error related to no sufficient memory.
+
+```shell
+module load mamba
+module load cuda
+mamba activate datacheck
+srun -p gpu --nodes=1 --gpus=a100:1 --time=01:30:00 --ntasks=1 --cpus-per-task=8 --mem 32gb  --pty -u bash -i
+tensorboard --logdir=/home/user/toorange/YOLOX/YOLOX_outputs/my_yolox_gender/tensorboard --port=6006 --bind_all
+```
+
+Then copy over the hostname, for example c0907a-s29.ufhpc:6006
+
+Then from the laptop (macbook), open another terminal (not from VSCODE!), run:
+```shell
+ssh -N -L 6007:c0907a-s29.ufhpc:6006 chenz1@hpg.rc.ufl.edu
+```
+
+After authentication, go to http://localhost:6007 on chrome.
+
+</details>
+
+<details>
+<summary>Ways to use and elemets</summary>
+
+</details>
+
+
+
+
 ### For YOLOX
 <details>
 <summary>Installation</summary>
