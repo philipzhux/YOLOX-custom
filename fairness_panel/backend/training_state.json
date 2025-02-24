@@ -1,0 +1,8 @@
+{
+  "batch_size": "154",
+  "learning_rate": "0.0488",
+  "epoch": 2471,
+  "loss_rate": 0.6091,
+  "running": false,
+  "stdout": "poch 2414 => loss 0.0424\nEpoch 2415 => loss 0.5098\nEpoch 2416 => loss 0.9568\nEpoch 2417 => loss 0.4508\nEpoch 2418 => loss 0.9959\nEpoch 2419 => loss 0.426\nEpoch 2420 => loss 0.567\nEpoch 2421 => loss 0.3216\nEpoch 2422 => loss 0.485\nEpoch 2423 => loss 0.2797\nEpoch 2424 => loss 0.2784\nEpoch 2425 => loss 0.2877\nEpoch 2426 => loss 0.7164\nEpoch 2427 => loss 0.0943\nEpoch 2428 => loss 0.6505\nEpoch 2429 => loss 0.1976\nEpoch 2430 => loss 0.4082\nEpoch 2431 => loss 0.4317\nEpoch 2432 => loss 0.1938\nEpoch 2433 => loss 0.2983\nEpoch 2434 => loss 0.0357\nEpoch 2435 => loss 0.8998\nEpoch 2436 => loss 0.1033\nEpoch 2437 => loss 0.8222\nEpoch 2438 => loss 0.7228\nEpoch 2439 => loss 0.5629\nEpoch 2440 => loss 0.1087\nEpoch 2441 => loss 0.2254\nEpoch 2442 => loss 0.1866\nEpoch 2443 => loss 0.7596\nEpoch 2444 => loss 0.6858\nEpoch 2445 => loss 0.9995\nEpoch 2446 => loss 0.0523\nEpoch 2447 => loss 0.4251\nEpoch 2448 => loss 0.7906\nEpoch 2449 => loss 0.0711\nEpoch 2450 => loss 0.6458\nEpoch 2451 => loss 0.2934\nEpoch 2452 => loss 0.9575\nEpoch 2453 => loss 0.0619\nEpoch 2454 => loss 0.843\nEpoch 2455 => loss 0.8131\nEpoch 2456 => loss 0.5478\nEpoch 2457 => loss 0.3174\nEpoch 2458 => loss 0.1434\nEpoch 2459 => loss 0.5791\nEpoch 2460 => loss 0.2122\nEpoch 2461 => loss 0.0953\nEpoch 2462 => loss 0.0348\nEpoch 2463 => loss 0.0999\nEpoch 2464 => loss 0.4653\nEpoch 2465 => loss 0.35\nEpoch 2466 => loss 0.457\nEpoch 2467 => loss 0.1232\nEpoch 2468 => loss 0.0368\nEpoch 2469 => loss 0.2839\nEpoch 2470 => loss 0.7516\nEpoch 2471 => loss 0.6091\n"
+}

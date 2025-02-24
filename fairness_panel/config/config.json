@@ -1,0 +1,5 @@
+{
+  "batch_size": "128",
+  "running": false,
+  "learning_rate": "0"
+}

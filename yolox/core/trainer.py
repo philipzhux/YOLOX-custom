@@ -4,6 +4,9 @@
 import datetime
 import os
 import time
+import json
+import fcntl
+from contextlib import contextmanager
 from loguru import logger
 
 import torch
@@ -36,6 +39,49 @@ from yolox.utils import (
 )
 
 
+@contextmanager
+def file_lock(path):
+    """Context manager for file locking"""
+    with open(path, 'r+') as f:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            yield f
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+def load_json_atomic(path):
+    """Load JSON file with file locking"""
+    if not os.path.exists(path):
+        return {}
+    with file_lock(path) as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON from {path}: {e}")
+            return {}
+
+def save_json_atomic(path, data):
+    """Save JSON file with file locking"""
+    with file_lock(path) as f:
+        json.dump(data, f, indent=2)
+        f.truncate()
+        f.flush()
+        os.fsync(f.fileno())
+
+def update_json_atomic(path, updates):
+    """Update JSON file with file locking"""
+    with file_lock(path) as f:
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError:
+            data = {}
+        data.update(updates)
+        f.seek(0)
+        json.dump(data, f, indent=2)
+        f.truncate()
+        f.flush()
+        os.fsync(f.fileno())
+
 class Trainer:
     def __init__(self, exp: Exp, args):
         # init function only defines some basic attr, other attrs like model, optimizer are built in
@@ -64,7 +110,7 @@ class Trainer:
         self.file_name = os.path.join(exp.output_dir, args.experiment_name)
 
         # Check environment variable "COMPUTE_TPR"
-        self.compute_tpr_flag = False
+        self.compute_tpr_flag = True
         # self.compute_tpr_flag = (os.getenv("COMPUTE_TPR", "0") == "1")
 
         if self.rank == 0:
@@ -77,15 +123,37 @@ class Trainer:
             mode="a",
         )
 
+        # Get paths from environment
+        self.config_path = os.getenv("YOLOX_CONFIG_PATH")
+        self.state_path = os.getenv("YOLOX_STATE_PATH")
+        self.dynamic_config_enabled = os.getenv("YOLOX_ENABLE_DYNAMIC_CONFIG") == "1"
+        
+        if self.dynamic_config_enabled:
+            logger.info("Dynamic configuration enabled")
+            logger.info(f"Config path: {self.config_path}")
+            logger.info(f"State path: {self.state_path}")
+
     def train(self):
         self.before_train()
         try:
             self.train_in_epoch()
         except Exception as e:
             logger.error("Exception in training: ", e)
+            if self.dynamic_config_enabled:
+                try:
+                    update_json_atomic(self.state_path, {"running": False})
+                    update_json_atomic(self.config_path, {"running": False})
+                except Exception as state_e:
+                    logger.error(f"Failed to update state on error: {state_e}")
             raise
         finally:
             self.after_train()
+            if self.dynamic_config_enabled:
+                try:
+                    update_json_atomic(self.state_path, {"running": False})
+                    update_json_atomic(self.config_path, {"running": False})
+                except Exception as e:
+                    logger.error(f"Failed to update final state: {e}")
 
     def train_in_epoch(self):
         for self.epoch in range(self.start_epoch, self.max_epoch):
@@ -111,7 +179,7 @@ class Trainer:
 
         with torch.cuda.amp.autocast(enabled=self.amp_training):
             outputs = self.model(inps, targets)
-        # print(outputs.keys())
+
         loss = outputs["total_loss"]
 
         self.optimizer.zero_grad()
@@ -148,6 +216,8 @@ class Trainer:
     def before_train(self):
         logger.info("args: {}".format(self.args))
         logger.info("exp value:\n{}".format(self.exp))
+        
+        update_json_atomic(self.state_path, {"running": True})
 
         # model related init
         torch.cuda.set_device(self.local_rank)
@@ -231,7 +301,66 @@ class Trainer:
                 self.mlflow_logger.on_train_end(self.args, file_name=self.file_name,
                                                 metadata=metadata)
 
+        if self.dynamic_config_enabled:
+            try:
+                # Update final checkpoint in state
+                latest_ckpt = os.path.join(self.file_name, "latest_ckpt.pth")
+                if os.path.exists(latest_ckpt):
+                    update_json_atomic(self.state_path, {
+                        "last_checkpoint": latest_ckpt
+                    })
+                    logger.info(f"Updated state with final checkpoint: {latest_ckpt}")
+            except Exception as e:
+                logger.error(f"Failed to update final checkpoint in state: {e}")
+
     def before_epoch(self):
+        """Apply any pending configuration changes at epoch boundary"""
+        if not self.dynamic_config_enabled:
+            return
+            
+        try:
+            config = load_json_atomic(self.config_path)
+                
+            # Check batch size change
+            new_batch_size = config.get("batch_size")
+            if new_batch_size and new_batch_size != self.args.batch_size:
+                logger.info(f"Applying batch size change from {self.args.batch_size} to {new_batch_size}")
+                self.args.batch_size = new_batch_size
+                # Recreate dataloader
+                self.train_loader = self.exp.get_data_loader(
+                    batch_size=self.args.batch_size,
+                    is_distributed=self.is_distributed,
+                    no_aug=self.no_aug,
+                    cache_img=self.args.cache,
+                )
+                self.prefetcher = DataPrefetcher(self.train_loader)
+                self.max_iter = len(self.train_loader)
+                
+                # Update learning rate scheduler
+                self.lr_scheduler = self.exp.get_lr_scheduler(
+                    self.exp.basic_lr_per_img * self.args.batch_size, self.max_iter
+                )
+                
+            # Check learning rate change
+            new_lr = config.get("learning_rate")
+            if new_lr:
+                current_lr = self.optimizer.param_groups[0]["lr"]
+                if abs(new_lr - current_lr) > 1e-7:
+                    logger.info(f"Learning rate changed from {current_lr} to {new_lr}")
+                    for param_group in self.optimizer.param_groups:
+                        param_group["lr"] = new_lr
+                        
+            # Update training state
+            updates = {
+                "batch_size": self.args.batch_size,
+                "learning_rate": self.optimizer.param_groups[0]["lr"]
+            }
+            update_json_atomic(self.state_path, updates)
+            update_json_atomic(self.config_path, updates)
+                
+        except Exception as e:
+            logger.error(f"Error checking config changes: {e}")
+        
         logger.info("---> start train epoch{}".format(self.epoch + 1))
 
         if self.epoch + 1 == self.max_epoch - self.exp.no_aug_epochs or self.no_aug:
@@ -299,7 +428,6 @@ class Trainer:
                 if self.args.logger == "tensorboard":
                     self.tblogger.add_scalar(
                         "train/lr", self.meter["lr"].latest, self.progress_in_iter)
-                    # print(self.meter.keys())
                     for k, v in loss_meter.items():
                         self.tblogger.add_scalar(
                             f"train/{k}", v.latest, self.progress_in_iter)
@@ -315,6 +443,25 @@ class Trainer:
                     self.mlflow_logger.on_log(self.args, self.exp, self.epoch+1, logs)
 
             self.meter.clear_meters()
+
+            if self.dynamic_config_enabled and (self.iter + 1) % self.exp.print_interval == 0:
+                # try:
+                loss_meter = self.meter.get_filtered_meter("loss")
+                updates = {
+                    "epoch": self.epoch + 1,
+                    "iteration": self.iter + 1,
+                    "learning_rate": float(self.meter["lr"].latest if self.meter["lr"].latest else 0.0),
+                    "batch_size": self.args.batch_size,
+                    "last_checkpoint": os.path.join(self.file_name, "latest_ckpt.pth")
+                }
+                for k, v in loss_meter.items():
+                    updates[f"{k}"] = float(v.latest if v.latest else 0.0)
+                update_json_atomic(self.state_path, updates)
+                update_json_atomic(self.config_path, {
+                    "learning_rate":  self.meter["lr"].latest,
+                })
+                # except Exception as e:
+                #     logger.error(f"Failed to update training state: {e}")
 
         # random resizing
         if (self.progress_in_iter + 1) % 10 == 0:
@@ -373,6 +520,7 @@ class Trainer:
             (ap50_95, ap50, summary), predictions = self.exp.eval(
                 evalmodel, self.evaluator, self.is_distributed, return_outputs=True
             )
+
         update_best_ckpt = ap50_95 > self.best_ap
         self.best_ap = max(self.best_ap, ap50_95)
 
@@ -384,7 +532,7 @@ class Trainer:
                     recall_by_class = summary["apr"]
                     for cls_name in recall_by_class:
                         self.tblogger.add_scalar(f"val/APR_{cls_name}", recall_by_class[cls_name], self.epoch + 1)
-                    fairness = min(recall_by_class.values())/max(recall_by_class.values())+1e-9
+                    fairness = min(recall_by_class.values())/(max(recall_by_class.values())+1e-9)
                     logger.info(f"\nFairness @epoch{self.epoch + 1} is {fairness}.")
                     self.tblogger.add_scalar(f"val/fairness", fairness, self.epoch + 1)
 
@@ -439,6 +587,17 @@ class Trainer:
                 self.file_name,
                 ckpt_name,
             )
+
+            # Update state file with new checkpoint
+            if self.dynamic_config_enabled:
+                try:
+                    checkpoint_path = os.path.join(self.file_name, ckpt_name)
+                    update_json_atomic(self.state_path, {
+                        "last_checkpoint": checkpoint_path
+                    })
+                    logger.info(f"Updated state with new checkpoint: {checkpoint_path}")
+                except Exception as e:
+                    logger.error(f"Failed to update state with checkpoint: {e}")
 
             if self.args.logger == "wandb":
                 self.wandb_logger.save_checkpoint(
