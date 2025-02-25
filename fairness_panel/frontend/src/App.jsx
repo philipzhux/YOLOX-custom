@@ -20,6 +20,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Modal,
 } from "@mui/material";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
@@ -60,7 +61,7 @@ function useDashboardData() {
   const [scalars, setScalars] = useState({});
   const [trainingState, setTrainingState] = useState(null);
   const [currentConfig, setCurrentConfig] = useState(null);
-  const [proposedConfig, setProposedConfig] = useState({
+  const [inputConfig, setInputConfig] = useState({
     batch_size: "",
     learning_rate: "",
     running: false
@@ -69,69 +70,111 @@ function useDashboardData() {
   const [error, setError] = useState(null);
   const [socket, setSocket] = useState(null);
   const [scalarData, setScalarData] = useState({});
+  const [inputInitialized, setInputInitialized] = useState(false);
+  const [connectionState, setConnectionState] = useState({
+    isConnected: false,
+    error: null,
+    reconnectAttempt: 0
+  });
 
   // Zoom/pan ranges stored in localStorage
   const [zoomRanges, setZoomRanges] = useState({});
 
+  // Initialize input values ONLY ONCE when current config is first loaded
+  useEffect(() => {
+    if (currentConfig && !inputInitialized) {
+      setInputConfig({
+        batch_size: String(currentConfig.batch_size),
+        learning_rate: String(currentConfig.learning_rate),
+        running: currentConfig.running
+      });
+      setInputInitialized(true);
+    }
+  }, [currentConfig, inputInitialized]);
+
   // Initialize WebSocket connection and fetch initial data
   useEffect(() => {
-    const newSocket = io('http://localhost:5100', {
-      transports: ['websocket'],  // Force WebSocket
-      reconnection: true,         // Enable reconnection
-      reconnectionAttempts: 10,   // Number of reconnection attempts
-      reconnectionDelay: 1000,    // Time between reconnection attempts
-      timeout: 60000             // Increase timeout
-    });
-    
-    newSocket.on('connect', () => {
-      console.log('WebSocket connected');
-      newSocket.emit('request_state');
-    });
+    let reconnectTimer;
 
-    newSocket.on('connect_error', (error) => {
-      console.log('Connection Error:', error);
-    });
-
-    newSocket.on('disconnect', (reason) => {
-      console.log('Disconnected:', reason);
-    });
-
-    newSocket.on('state_update', (data) => {
-      console.log('Received state update:', data);  // Debug log
-      setTrainingState(data.state);
-      setCurrentConfig(data.config);
-      
-      // Update proposedConfig to match the current state
-      setProposedConfig({
-        batch_size: String(data.state.batch_size),
-        learning_rate: String(data.state.learning_rate),
-        running: data.state.running
+    const connectSocket = () => {
+      const newSocket = io('http://localhost:5100', {
+        transports: ['websocket'],
+        reconnection: false,  // We'll handle reconnection manually
       });
-    });
 
-    newSocket.on('config_updated', (response) => {
-      console.log('Config update response:', response);  // Debug log
-      if (response.status === 'error') {
-        setError(response.message);
-      }
-      setIsChanging(false);
-    });
+      newSocket.on('connect', () => {
+        console.log('Connected to server');
+        setConnectionState(prev => ({
+          ...prev,
+          isConnected: true,
+          error: null,
+          reconnectAttempt: 0
+        }));
+        newSocket.emit('request_state');
+      });
 
-    newSocket.on('state_error', (error) => {
-      setError(error.message);
-    });
+      newSocket.on('connect_error', (error) => {
+        console.log('Connection Error:', error);
+        setConnectionState(prev => ({
+          ...prev,
+          isConnected: false,
+          error: 'Failed to connect to server',
+          reconnectAttempt: prev.reconnectAttempt + 1
+        }));
+      });
 
-    newSocket.on('scalar_update', (newData) => {
-      // Simply replace the entire scalar data
-      setScalarData(newData);
-    });
+      newSocket.on('disconnect', (reason) => {
+        console.log('Disconnected:', reason);
+        setConnectionState(prev => ({
+          ...prev,
+          isConnected: false,
+          error: `Disconnected: ${reason}`,
+          reconnectAttempt: prev.reconnectAttempt + 1
+        }));
+      });
 
-    setSocket(newSocket);
+      newSocket.on('state_update', (data) => {
+        console.log('Received state update:', data);
+        setTrainingState(data.state);
+        setCurrentConfig(data.config);
+      });
+
+      newSocket.on('config_updated', (response) => {
+        console.log('Config update response:', response);
+        if (response.status === 'error') {
+          setError(response.message);
+        }
+        setIsChanging(false);
+      });
+
+      newSocket.on('state_error', (error) => {
+        setError(error.message);
+      });
+
+      newSocket.on('scalar_update', (newData) => {
+        setScalarData(newData);
+      });
+
+      setSocket(newSocket);
+    };
+
+    const startReconnectTimer = () => {
+      reconnectTimer = setInterval(() => {
+        if (!connectionState.isConnected) {
+          console.log('Attempting to reconnect...');
+          connectSocket();
+        }
+      }, 5000);
+    };
+
+    connectSocket();
+    startReconnectTimer();
 
     return () => {
-      newSocket.close();
+      clearInterval(reconnectTimer);
+      if (socket) socket.disconnect();
     };
-  }, []);
+  }, [connectionState.isConnected]);
 
   // Fetch scalars separately
   useEffect(() => {
@@ -160,56 +203,43 @@ function useDashboardData() {
       .catch((err) => setError(err.message));
   }
 
-  function handleProposedChange(field, val) {
-    if (field === "running") {
-      setProposedConfig((prev) => ({ ...prev, [field]: Boolean(val) }));
-    } else {
-      setProposedConfig((prev) => ({ ...prev, [field]: val }));
+  const handleInputChange = (key, value) => {
+    if (key === 'learning_rate' && !trainingState?.learning_rate) {
+      console.log('Cannot modify learning rate before training starts');
+      return;
     }
-  }
 
-  const handleStart = useCallback(() => {
-    console.log('Sending start command...');
-    if (socket) {
-      const newConfig = {
-        batch_size: proposedConfig.batch_size,
-        learning_rate: proposedConfig.learning_rate,
-        running: true
-      };
-      console.log('New config to send:', newConfig);
-      socket.emit('update_config', newConfig);
-      // Update both proposed and current config immediately
-      handleProposedChange("running", true);
-      setCurrentConfig(prev => ({ ...prev, running: true }));
-    } else {
-      console.log('Socket not connected!');
-    }
-  }, [socket, proposedConfig, handleProposedChange]);
-
-  const handleStop = useCallback(() => {
-    if (socket) {
-      const newConfig = {
-        batch_size: proposedConfig.batch_size,
-        learning_rate: proposedConfig.learning_rate,
-        running: false
-      };
-      socket.emit('update_config', newConfig);
-      // Update both proposed and current config immediately
-      handleProposedChange("running", false);
-      setCurrentConfig(prev => ({ ...prev, running: false }));
-    }
-  }, [socket, proposedConfig, handleProposedChange]);
-
-  function applyChanges() {
+    setInputConfig(prev => ({
+      ...prev,
+      [key]: value
+    }));
     setIsChanging(true);
-    if (socket) {
-      socket.emit('update_config', {
-        batch_size: proposedConfig.batch_size,
-        learning_rate: proposedConfig.learning_rate,
-        running: proposedConfig.running
-      });
-    }
-  }
+  };
+
+  const applyChanges = () => {
+    if (!socket) return;
+    
+    const newConfig = {
+      ...currentConfig,
+      batch_size: parseInt(inputConfig.batch_size),
+      learning_rate: parseFloat(inputConfig.learning_rate),
+      running: inputConfig.running
+    };
+    
+    socket.emit('update_config', newConfig);
+  };
+
+  const handleStop = () => {
+    if (!socket) return;
+    setInputConfig(prev => ({ ...prev, running: false }));
+    socket.emit('update_config', { ...currentConfig, running: false });
+  };
+
+  const handleStart = () => {
+    if (!socket) return;
+    setInputConfig(prev => ({ ...prev, running: true }));
+    socket.emit('update_config', { ...currentConfig, running: true });
+  };
 
   // == Zoom/Pan events ==
   function handleZoomPanComplete(metricKey, chart) {
@@ -289,11 +319,12 @@ function useDashboardData() {
     scalars,
     trainingState,
     currentConfig,
-    proposedConfig,
+    inputConfig,
     isChanging,
     error,
+    connectionState,
     isPending,
-    handleProposedChange,
+    handleInputChange,
     applyChanges,
     getChartOptions,
     handleStop,
@@ -326,11 +357,12 @@ export default function MainApp() {
     scalars,
     trainingState,
     currentConfig,
-    proposedConfig,
+    inputConfig,
     isChanging,
     error,
+    connectionState,
     isPending,
-    handleProposedChange,
+    handleInputChange,
     applyChanges,
     getChartOptions,
     handleStop,
@@ -373,7 +405,7 @@ export default function MainApp() {
 
   // Overlay for Start/Stop
   const stateRunning = trainingState.running;
-  const configRunning = proposedConfig.running;
+  const configRunning = inputConfig.running;
   let overlayText = "";
   if (isChanging) {
     if (configRunning && !stateRunning) overlayText = "Starting up…";
@@ -434,7 +466,7 @@ export default function MainApp() {
               sx={{ color: 'warning.contrastText' }} 
             />
             <Typography>
-              Changes pending... Waiting for simulator to update
+              Changes pending... Waiting for trainer to update
             </Typography>
           </Paper>
         )}
@@ -616,7 +648,7 @@ export default function MainApp() {
                   pointerEvents: isPending() ? 'none' : 'auto'
                 }}>
                   <Box sx={{ mb: 1 }}>
-                    Running: {String(proposedConfig.running)}
+                    Running: {String(inputConfig.running)}
                   </Box>
                   {trainingState?.running ? (
                     <Button
@@ -642,8 +674,8 @@ export default function MainApp() {
                     type="number"
                     fullWidth
                     margin="dense"
-                    value={proposedConfig.batch_size}
-                    onChange={(e) => handleProposedChange("batch_size", e.target.value)}
+                    value={inputConfig.batch_size}
+                    onChange={(e) => handleInputChange("batch_size", e.target.value)}
                     disabled={isPending()}
                     sx={{ mb: 1 }}
                   />
@@ -652,8 +684,8 @@ export default function MainApp() {
                     type="number"
                     fullWidth
                     margin="dense"
-                    value={proposedConfig.learning_rate}
-                    onChange={(e) => handleProposedChange("learning_rate", e.target.value)}
+                    value={inputConfig.learning_rate}
+                    onChange={(e) => handleInputChange("learning_rate", e.target.value)}
                     disabled={isPending()}
                   />
                   <Button 
@@ -761,6 +793,38 @@ export default function MainApp() {
           </Box>
         </Box>
       </Container>
+
+      {/* Single Connection/Loading Modal */}
+      <Modal
+        open={!connectionState.isConnected || !trainingState}
+        aria-labelledby="connection-modal-title"
+        aria-describedby="connection-modal-description"
+      >
+        <Box sx={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 400,
+          bgcolor: 'background.paper',
+          borderRadius: 2,
+          boxShadow: 24,
+          p: 4,
+        }}>
+          <Typography id="connection-modal-title" variant="h6" component="h2" gutterBottom>
+            Connection Error
+          </Typography>
+          <Typography id="connection-modal-description" sx={{ mt: 2, mb: 3 }}>
+            {connectionState.error || 'Connecting to server...'}
+          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <CircularProgress size={20} />
+            <Typography variant="body2" color="text.secondary">
+              Reconnect attempt: {connectionState.reconnectAttempt}
+            </Typography>
+          </Box>
+        </Box>
+      </Modal>
     </ThemeProvider>
   );
 }

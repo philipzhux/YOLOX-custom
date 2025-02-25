@@ -301,18 +301,6 @@ class Trainer:
                 self.mlflow_logger.on_train_end(self.args, file_name=self.file_name,
                                                 metadata=metadata)
 
-        if self.dynamic_config_enabled:
-            try:
-                # Update final checkpoint in state
-                latest_ckpt = os.path.join(self.file_name, "latest_ckpt.pth")
-                if os.path.exists(latest_ckpt):
-                    update_json_atomic(self.state_path, {
-                        "last_checkpoint": latest_ckpt
-                    })
-                    logger.info(f"Updated state with final checkpoint: {latest_ckpt}")
-            except Exception as e:
-                logger.error(f"Failed to update final checkpoint in state: {e}")
-
     def before_epoch(self):
         """Apply any pending configuration changes at epoch boundary"""
         if not self.dynamic_config_enabled:
@@ -323,8 +311,10 @@ class Trainer:
                 
             # Check batch size change
             new_batch_size = config.get("batch_size")
-            if new_batch_size and new_batch_size != self.args.batch_size:
+            if new_batch_size and int(new_batch_size) != int(self.args.batch_size):
+                new_batch_size = int(new_batch_size)
                 logger.info(f"Applying batch size change from {self.args.batch_size} to {new_batch_size}")
+                self.exp.basic_lr_per_img = self.exp.basic_lr_per_img * self.args.batch_size / new_batch_size
                 self.args.batch_size = new_batch_size
                 # Recreate dataloader
                 self.train_loader = self.exp.get_data_loader(
@@ -337,26 +327,18 @@ class Trainer:
                 self.max_iter = len(self.train_loader)
                 
                 # Update learning rate scheduler
-                self.lr_scheduler = self.exp.get_lr_scheduler(
-                    self.exp.basic_lr_per_img * self.args.batch_size, self.max_iter
-                )
-                
-            # Check learning rate change
-            new_lr = config.get("learning_rate")
-            if new_lr:
-                current_lr = self.optimizer.param_groups[0]["lr"]
-                if abs(new_lr - current_lr) > 1e-7:
-                    logger.info(f"Learning rate changed from {current_lr} to {new_lr}")
-                    for param_group in self.optimizer.param_groups:
-                        param_group["lr"] = new_lr
+                new_lr = config.get("learning_rate")
+                if not new_lr:
+                    new_lr = self.exp.basic_lr_per_img * self.args.batch_size
+                self.lr_scheduler = self.exp.get_lr_scheduler(new_lr, self.max_iter)
                         
             # Update training state
             updates = {
                 "batch_size": self.args.batch_size,
-                "learning_rate": self.optimizer.param_groups[0]["lr"]
+                "learning_rate": new_lr
             }
-            update_json_atomic(self.state_path, updates)
             update_json_atomic(self.config_path, updates)
+            update_json_atomic(self.state_path, updates)
                 
         except Exception as e:
             logger.error(f"Error checking config changes: {e}")
@@ -445,23 +427,28 @@ class Trainer:
             self.meter.clear_meters()
 
             if self.dynamic_config_enabled and (self.iter + 1) % self.exp.print_interval == 0:
-                # try:
-                loss_meter = self.meter.get_filtered_meter("loss")
-                updates = {
-                    "epoch": self.epoch + 1,
-                    "iteration": self.iter + 1,
-                    "learning_rate": float(self.meter["lr"].latest if self.meter["lr"].latest else 0.0),
-                    "batch_size": self.args.batch_size,
-                    "last_checkpoint": os.path.join(self.file_name, "latest_ckpt.pth")
-                }
-                for k, v in loss_meter.items():
-                    updates[f"{k}"] = float(v.latest if v.latest else 0.0)
-                update_json_atomic(self.state_path, updates)
-                update_json_atomic(self.config_path, {
-                    "learning_rate":  self.meter["lr"].latest,
-                })
-                # except Exception as e:
-                #     logger.error(f"Failed to update training state: {e}")
+                try:
+                    loss_meter = self.meter.get_filtered_meter("loss")
+                    updates = {
+                        "epoch": self.epoch + 1,
+                        "iteration": self.iter + 1,
+                        "learning_rate_adaptive": self.lr_scheduler.lr,
+                        "batch_size": self.args.batch_size,
+                    }
+                    for k, v in loss_meter.items():
+                        if v.latest is not None:
+                            updates[f"{k}"] = float(v.latest)
+                    updates.update(
+                        {
+                            "progress": progress_str,
+                            "mem": mem_str,
+                            "time": time_str,
+                            "eta": eta_str,
+                        }
+                    )
+                    update_json_atomic(self.state_path, updates)
+                except Exception as e:
+                    logger.error(f"Failed to update training state: {e}")
 
         # random resizing
         if (self.progress_in_iter + 1) % 10 == 0:
@@ -477,7 +464,7 @@ class Trainer:
         if self.args.resume:
             logger.info("resume training")
             if self.args.ckpt is None:
-                ckpt_file = os.path.join(self.file_name, "latest" + "_ckpt.pth")
+                ckpt_file = os.path.join(self.file_name, "latest.pth")
             else:
                 ckpt_file = self.args.ckpt
 

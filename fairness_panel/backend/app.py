@@ -124,7 +124,6 @@ if not os.path.exists(STATE_FILE):
         "batch_size": 32,
         "learning_rate": 0.001,
         "epoch": 0,
-        "loss_rate": 0.0,
         "stdout": "No logs yet.",
         "running": False
     }
@@ -201,6 +200,13 @@ def get_scalars():
     return jsonify(scalars)
 
 if __name__ == "__main__":
+    # Create the config and state files if they don't exist
+    if not os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "w") as f:
+            json.dump({}, f)
+    if not os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "w") as f:
+            json.dump({}, f)
     # Start the monitoring thread
     monitor_thread = Thread(target=check_state_changes, daemon=True)
     monitor_thread.start()
