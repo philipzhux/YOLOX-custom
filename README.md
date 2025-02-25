@@ -7,18 +7,85 @@ In modern machine learning, interactive learning with multiple fairness metrics 
 #### YOLOX
 YOLOX is an anchor-free version of YOLO, with a simpler design (but better performance)! It aims to bridge the gap between research and industrial communities.
 
+## TB Plugin
+The articatture of our plugin.
+<img src="assets/Workflow.png" width="800">
 
-## Quick Start
+This project integrates a **TensorBoard plugin** for visualizing fairness in machine learning models. The system consists of four key components:
+
+#### **1. Interface (Visualization Panel)**
+- A graphical user interface (GUI) that displays real-time metrics, logs, and fairness visualizations.
+- Provides interactive plots and structured logs to track model behavior.
+
+#### **2. Terminal**
+- The command-line interface (CLI) used to run scripts, execute commands, and manage processes.
+
+#### **3. Code Script (ML Model & Logging)**
+- The core script that handles model training, logging, and monitoring fairness.
+
+#### **4. Data**
+- The dataset used for model training and evaluation.
+- Structured storage that feeds into the ML pipeline.
+
+### **How It Works**
+1. The **code script** executes model training, logs outputs, and tracks fairness-related metrics.
+2. The **terminal** is used to launch, monitor, and manage the process.
+3. The **interface** visualizes key metrics, enhancing interpretability and fairness tracking.
+4. The **data storage** provides training and evaluation datasets.
+
+This TensorBoard plugin is designed to ensure **transparency, interpretability, and fairness** in machine learning workflows.
+
 Below shows a prospective finished overlook of our plugin.
 
-<img src="assets/overview.png" width="1000" >
+<img src="assets/overview.png" width="1200" >
+
+
+Below shows a current finished overlook of our plugin.
+
+<img src="assets/p_overview.png" width="1000" >
+
+## Quick Start
 
 It have many aspect, like Visualization, Data/Token showing, HyperParameter Tuning, Basic interactive tab(Batch, LR, Pause, etc), Terminal tabs.
 
 Note: the data/token may show only just few raondomly insetad of all the tokens.
 
+### Start with TB Plugin
 
-### For TensorBoard Plugin
+<details>
+<summary>How to activate Plugin</summary>
+You need three terminal to get our Plugin for now. One for the backend, one for the frontend, and last one for running script.
+
+In 1st terminal(backend),
+```shell
+cd /home/chenz1/toorange/TBtest/YOLOX/fairness_panel
+bash start_panel_backend.sh
+```
+
+In 2nf terminal(frontend),
+```shell
+cd /home/chenz1/toorange/TBtest/YOLOX/fairness_panel
+bash start_panel_frontend.sh
+```
+
+In 3rd terminal(training),
+```shell
+cd /home/chenz1/toorange/TBtest/YOLOX/fairness_panel
+bash start_training_controller.sh
+```
+
+Then go to localhost:5173. You can use the Plugin.
+</details>
+
+
+<details>
+<summary>How to interactive with Plugin (now)</summary>
+<img src="assets/config.png" width="1000" >
+
+Currently, you can change "Batch Size", "Learning Rate" and "Stop/Start". Each time you change the Batch and LR, you should press "apply" to made work.(noticed it will be applied in next epoch)
+
+All realted information of the training process are also shown on this part.
+</details>
 
 <details>
 <summary>Ways to connected to Hipergator Node</summary>
@@ -44,15 +111,9 @@ After authentication, go to http://localhost:6007 on chrome.
 
 </details>
 
-<details>
-<summary>Ways to use and elemets</summary>
-
-</details>
 
 
-
-
-### For YOLOX
+### Start with YOLOX
 <details>
 <summary>Installation</summary>
 
