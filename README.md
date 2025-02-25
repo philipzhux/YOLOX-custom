@@ -35,12 +35,11 @@ This project integrates a **TensorBoard plugin** for visualizing fairness in mac
 
 This TensorBoard plugin is designed to ensure **transparency, interpretability, and fairness** in machine learning workflows.
 
-Below shows a prospective finished overlook of our plugin.
+Below shows a current finished overlook of our plugin.
 
 <img src="assets/overview.png" width="1200" >
 
-
-Below shows a current finished overlook of our plugin.
+Below shows a prospective finished overlook of our plugin.
 
 <img src="assets/p_overview.png" width="1000" >
 
