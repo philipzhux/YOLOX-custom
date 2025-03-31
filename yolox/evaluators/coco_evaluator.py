@@ -318,77 +318,64 @@ class COCOEvaluator:
             # Calculate metrics per class
             recall_by_class = {}
             precision_by_class = {}
-            scores_by_class = defaultdict(list)
             tp_fp_metrics = {}
 
             recalls = cocoEval.eval["recall"]
             precisions = cocoEval.eval["precision"]
             scores = cocoEval.eval["scores"]
             
-            # Get counts from evaluation
-            evalImgs = cocoEval.evalImgs
-            
+            # Get total number of ground truth objects per class
+            gt_counts = {}
+            for imgId in cocoGt.imgs:
+                annIds = cocoGt.getAnnIds(imgIds=imgId)
+                anns = cocoGt.loadAnns(annIds)
+                for ann in anns:
+                    catId = ann['category_id']
+                    cat_name = cocoGt.cats[catId]['name']
+                    gt_counts[cat_name] = gt_counts.get(cat_name, 0) + 1
+
             for idx, name in enumerate(cat_names):
-                # Calculate recall
-                recall = recalls[:, idx, 0, -1]
+                # Calculate recall and precision
+                recall = recalls[:, idx, 0, -1]  # Take all IoU thresholds, first area range, max dets
                 recall = recall[recall > -1]
                 ar = np.mean(recall) if recall.size else float("nan")
                 recall_by_class[name] = float(ar * 100)
 
-                # Calculate precision
-                precision = precisions[:, :, idx, 0, -1]
+                precision = precisions[:, :, idx, 0, -1]  # Take all IoU and recall thresholds
                 precision = precision[precision > -1]
                 ap = np.mean(precision) if precision.size else float("nan")
                 precision_by_class[name] = float(ap * 100)
 
-                # Get scores
-                cls_scores = scores[0, :, idx, 0, -1]  # Take first IoU threshold
-                cls_scores = cls_scores[cls_scores > -1]
-                if len(cls_scores) > 0:
-                    scores_by_class[name] = cls_scores.tolist()
+                # Get number of ground truth objects for this class
+                n_gt = gt_counts.get(name, 0)
 
-                # Calculate TP and FP metrics
-                tp_count = 0
-                fp_count = 0
-                fn_count = 0
-                
-                # Filter evalImgs for this category
-                cat_eval_imgs = [e for e in evalImgs if e is not None and e['category_id'] == cat_ids[idx]]
-                
-                for eval_img in cat_eval_imgs:
-                    dtMatches = eval_img['dtMatches']  # Detection matches
-                    gtMatches = eval_img['gtMatches']  # Ground truth matches
-                    dtIgnore = eval_img['dtIgnore']    # Detections to ignore
+                if n_gt > 0 and not np.isnan(ar) and not np.isnan(ap):
+                    # Calculate TP, FP, FN from recall and precision
+                    # recall = TP / (TP + FN)
+                    # precision = TP / (TP + FP)
                     
-                    # Count matches at IoU threshold 0 (first threshold)
-                    dt_matches = dtMatches[0]
-                    dt_ignore = dtIgnore[0]
+                    # From recall equation:
+                    # TP = recall * (TP + FN)
+                    # TP = recall * n_gt  (since TP + FN = total ground truth)
+                    tp = int(round(ar * n_gt))
                     
-                    # True positives: detections that match ground truth
-                    tp_count += np.sum(dt_matches > 0)
+                    # From precision equation:
+                    # precision = TP / (TP + FP)
+                    # TP + FP = TP / precision
+                    # FP = (TP / precision) - TP
+                    fp = int(round((tp / ap) - tp)) if ap > 0 else 0
                     
-                    # False positives: detections that don't match ground truth and aren't ignored
-                    fp_count += np.sum((dt_matches == 0) & (dt_ignore == 0))
-                    
-                    # False negatives: ground truth objects that weren't detected
-                    fn_count += np.sum(gtMatches[0] == 0)
-
-                if (tp_count + fn_count) > 0:
-                    tpr = float(tp_count) / float(tp_count + fn_count)
+                    # FN = total ground truth - TP
+                    fn = n_gt - tp
                 else:
-                    tpr = 0.0
-                
-                if (fp_count + tp_count) > 0:
-                    fpr = float(fp_count) / float(fp_count + tp_count)
-                else:
-                    fpr = 0.0
+                    tp = 0
+                    fp = 0
+                    fn = n_gt
 
                 tp_fp_metrics[name] = {
-                    "true_positives": int(tp_count),
-                    "false_positives": int(fp_count),
-                    "false_negatives": int(fn_count),
-                    "tpr": float(tpr),
-                    "fpr": float(fpr)
+                    "true_positives": max(0, tp),  # Ensure non-negative
+                    "false_positives": max(0, fp),
+                    "false_negatives": max(0, fn)
                 }
             
             if self.get_apr:
@@ -396,7 +383,6 @@ class COCOEvaluator:
                     "info": info,
                     "apr": recall_by_class,
                     "precision": precision_by_class,
-                    "scores": scores_by_class,
                     "tp_fp_metrics": tp_fp_metrics
                 }
             return cocoEval.stats[0], cocoEval.stats[1], info
