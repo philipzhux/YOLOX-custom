@@ -36,9 +36,11 @@ import {
   Tooltip as ChartTooltip,
   Legend as ChartLegend,
   TimeScale,
+  RadialLinearScale,
+  Filler,
 } from "chart.js";
 import zoomPlugin from "chartjs-plugin-zoom";
-import { Line } from "react-chartjs-2";
+import { Line, Radar } from "react-chartjs-2";
 import { LazyLog } from "react-lazylog";
 import { io } from 'socket.io-client';
 
@@ -52,7 +54,9 @@ ChartJS.register(
   ChartTooltip,
   ChartLegend,
   TimeScale,
-  zoomPlugin
+  zoomPlugin,
+  RadialLinearScale,
+  Filler
 );
 
 /**
@@ -369,8 +373,61 @@ function MetricsTabs({ scalars, getChartOptions }) {
   };
 
   const renderMetricCharts = (metrics) => {
-    return Object.entries(metrics).map(([metricKey, arr]) => {
-      if (!Array.isArray(arr) || arr.length === 0) {
+    return Object.entries(metrics).map(([metricKey, data]) => {
+      // Handle fairness radar chart
+      if (data.is_radar) {
+        // Get latest values for each metric
+        const lastValues = {};
+        Object.entries(data.values).forEach(([metric, values]) => {
+          if (values.length > 0) {
+            lastValues[metric.split('/').pop()] = values[values.length - 1].value;
+          }
+        });
+
+        const radarData = {
+          labels: Object.keys(lastValues),
+          datasets: [{
+            label: 'Fairness Metrics',
+            data: Object.values(lastValues),
+            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+            borderColor: 'rgba(255, 99, 132, 1)',
+            borderWidth: 1,
+          }]
+        };
+
+        const radarOptions = {
+          scales: {
+            r: {
+              beginAtZero: true,
+              suggestedMax: Math.max(...Object.values(lastValues)) * 1.2,
+            }
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top',
+            },
+            title: {
+              display: true,
+              text: 'Fairness Overview'
+            }
+          }
+        };
+
+        return (
+          <Box key={metricKey} sx={{ mb: 3 }}>
+            <Typography fontWeight="bold" sx={{ mb: 1 }}>
+              Fairness Metrics Radar
+            </Typography>
+            <Box sx={{ height: 300, width: '100%' }}>
+              <Radar data={radarData} options={radarOptions} />
+            </Box>
+          </Box>
+        );
+      }
+
+      // Regular line chart for other metrics
+      if (!Array.isArray(data) || data.length === 0) {
         return (
           <Box key={metricKey} sx={{ p: 2 }}>
             <Typography>{metricKey}</Typography>
@@ -380,10 +437,10 @@ function MetricsTabs({ scalars, getChartOptions }) {
       }
 
       const chartData = {
-        labels: arr.map((pt) => pt.step),
+        labels: data.map((pt) => pt.step),
         datasets: [{
           label: metricKey,
-          data: arr.map((pt) => pt.value),
+          data: data.map((pt) => pt.value),
           borderColor: "#8884d8",
           backgroundColor: "#8884d8",
         }],

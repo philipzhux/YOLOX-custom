@@ -25,6 +25,13 @@ LOG_DIR = os.getenv("LOG_DIR", "/home/chenz1/toorange/TBtest/YOLOX/YOLOX_outputs
 # Track processed event files
 processed_mtimes = {}
 
+# Define metrics for the fairness radar chart
+FAIRNESS_METRICS = [
+    'bias/avg_amplification',
+    'fairness/recall/ratio',
+    'fairness/precision/avg'
+]
+
 def get_event_files():
     """Get all tensorboard event files sorted by modification time"""
     event_files = []
@@ -133,6 +140,10 @@ if not os.path.exists(STATE_FILE):
 def parse_tensorboard_logs(log_dir):
     """Parse and group tensorboard logs"""
     grouped_data = {}
+    fairness_radar_data = {
+        'steps': [],
+        'values': {metric: [] for metric in FAIRNESS_METRICS}
+    }
     
     for root, _, files in os.walk(log_dir):
         for file in files:
@@ -140,15 +151,22 @@ def parse_tensorboard_logs(log_dir):
                 file_path = os.path.join(root, file)
                 for event in summary_iterator(file_path):
                     for value in event.summary.value:
-                        # Split tag into group and metric name
                         parts = value.tag.split('/')
                         group = parts[0]
                         
-                        # Initialize group if not exists
+                        # Special handling for fairness radar metrics
+                        if value.tag in FAIRNESS_METRICS:
+                            if event.step not in fairness_radar_data['steps']:
+                                fairness_radar_data['steps'].append(event.step)
+                            fairness_radar_data['values'][value.tag].append({
+                                'step': event.step,
+                                'value': value.simple_value
+                            })
+                        
+                        # Regular grouping for other metrics
                         if group not in grouped_data:
                             grouped_data[group] = {}
-                            
-                        # Store metric data
+                        
                         if value.tag not in grouped_data[group]:
                             grouped_data[group][value.tag] = []
                         
@@ -157,11 +175,19 @@ def parse_tensorboard_logs(log_dir):
                             "value": value.simple_value
                         })
     
-    # Sort each metric's data by step
+    # Sort regular metrics by step
     for group in grouped_data.values():
         for metric in group:
             group[metric].sort(key=lambda x: x["step"])
-            
+    
+    # Add fairness radar data to grouped data
+    grouped_data['fairness_radar'] = {
+        'is_radar': True,
+        'metrics': FAIRNESS_METRICS,
+        'steps': sorted(fairness_radar_data['steps']),
+        'values': fairness_radar_data['values']
+    }
+    
     return grouped_data
 
 def save_json(path, data):
