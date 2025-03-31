@@ -131,22 +131,38 @@ if not os.path.exists(STATE_FILE):
         json.dump(default_state, f, indent=2)
 
 def parse_tensorboard_logs(log_dir):
-    scalar_data = {}
-    # Recursively walk logs dir to find any events.out.tfevents.* files
+    """Parse and group tensorboard logs"""
+    grouped_data = {}
+    
     for root, _, files in os.walk(log_dir):
         for file in files:
             if "events.out.tfevents" in file:
                 file_path = os.path.join(root, file)
-                # read through all events, extracting scalars
                 for event in summary_iterator(file_path):
                     for value in event.summary.value:
-                        if value.tag not in scalar_data:
-                            scalar_data[value.tag] = []
-                        scalar_data[value.tag].append({
+                        # Split tag into group and metric name
+                        parts = value.tag.split('/')
+                        group = parts[0]
+                        
+                        # Initialize group if not exists
+                        if group not in grouped_data:
+                            grouped_data[group] = {}
+                            
+                        # Store metric data
+                        if value.tag not in grouped_data[group]:
+                            grouped_data[group][value.tag] = []
+                        
+                        grouped_data[group][value.tag].append({
                             "step": event.step,
                             "value": value.simple_value
                         })
-    return scalar_data
+    
+    # Sort each metric's data by step
+    for group in grouped_data.values():
+        for metric in group:
+            group[metric].sort(key=lambda x: x["step"])
+            
+    return grouped_data
 
 def save_json(path, data):
     with open(path, "w") as f:
@@ -196,8 +212,8 @@ def handle_state_request():
 
 @app.route("/scalars", methods=["GET"])
 def get_scalars():
-    scalars = parse_tensorboard_logs(LOG_DIR)
-    return jsonify(scalars)
+    grouped_scalars = parse_tensorboard_logs(LOG_DIR)
+    return jsonify(grouped_scalars)
 
 if __name__ == "__main__":
     # Create the config and state files if they don't exist

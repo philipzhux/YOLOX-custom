@@ -21,6 +21,8 @@ import {
   TableHead,
   TableRow,
   Modal,
+  Tabs,
+  Tab,
 } from "@mui/material";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
@@ -332,6 +334,118 @@ function useDashboardData() {
   };
 }
 
+// Add this helper function to group metrics by prefix
+function groupMetricsByPrefix(scalars) {
+  const groups = {
+    performance: {},
+    raw: {},
+    tpr: {},
+    fairness: {},
+    bias: {},
+    others: {}  // For metrics that don't match any known prefix
+  };
+
+  Object.entries(scalars).forEach(([key, value]) => {
+    const parts = key.split('/');
+    const prefix = parts[0];
+    
+    if (groups.hasOwnProperty(prefix)) {
+      groups[prefix][key] = value;
+    } else {
+      groups.others[key] = value;
+    }
+  });
+
+  return groups;
+}
+
+// Create a new MetricsTabs component
+function MetricsTabs({ scalars, getChartOptions }) {
+  const [currentTab, setCurrentTab] = useState(0);
+  const groups = Object.keys(scalars);
+  
+  const handleTabChange = (event, newValue) => {
+    setCurrentTab(newValue);
+  };
+
+  const renderMetricCharts = (metrics) => {
+    return Object.entries(metrics).map(([metricKey, arr]) => {
+      if (!Array.isArray(arr) || arr.length === 0) {
+        return (
+          <Box key={metricKey} sx={{ p: 2 }}>
+            <Typography>{metricKey}</Typography>
+            <Typography>No data</Typography>
+          </Box>
+        );
+      }
+
+      const chartData = {
+        labels: arr.map((pt) => pt.step),
+        datasets: [{
+          label: metricKey,
+          data: arr.map((pt) => pt.value),
+          borderColor: "#8884d8",
+          backgroundColor: "#8884d8",
+        }],
+      };
+
+      return (
+        <Box key={metricKey} sx={{ mb: 3 }}>
+          <Typography fontWeight="bold" sx={{ mb: 1 }}>
+            {metricKey}
+          </Typography>
+          <Box sx={{ width: "100%", height: 300 }}>
+            <Line data={chartData} options={getChartOptions(metricKey)} />
+          </Box>
+        </Box>
+      );
+    });
+  };
+
+  return (
+    <Box sx={{ width: '100%' }}>
+      <Tabs 
+        value={currentTab} 
+        onChange={handleTabChange}
+        variant="scrollable"
+        scrollButtons="auto"
+        sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
+      >
+        {groups.map((group, index) => (
+          <Tab key={group} label={group.charAt(0).toUpperCase() + group.slice(1)} />
+        ))}
+      </Tabs>
+
+      {groups.map((group, index) => (
+        <TabPanel key={group} value={currentTab} index={index}>
+          {renderMetricCharts(scalars[group])}
+        </TabPanel>
+      ))}
+    </Box>
+  );
+}
+
+// Helper component for tabs
+function TabPanel(props) {
+  const { children, value, index, ...other } = props;
+
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`metrics-tabpanel-${index}`}
+      aria-labelledby={`metrics-tab-${index}`}
+      {...other}
+    >
+      {value === index && (
+        <Box sx={{ p: 3 }}>
+          {children}
+        </Box>
+      )}
+    </div>
+  );
+}
+
 /**
  * 5) Single-Page layout. 
  *    - Top bar for brand & dark mode toggle
@@ -539,7 +653,7 @@ export default function MainApp() {
               </Box>
             </Paper>
 
-            {/* Metrics Paper - Now Second */}
+            {/* Metrics Paper */}
             <Paper sx={{ p: 2 }} elevation={2}>
               <Typography variant="h6" fontWeight="bold" gutterBottom>
                 Metrics
@@ -549,38 +663,7 @@ export default function MainApp() {
                   <CircularProgress />
                 </Box>
               ) : (
-                Object.keys(scalars).map((metricKey) => {
-                  const arr = scalars[metricKey];
-                  if (!Array.isArray(arr) || arr.length === 0) {
-                    return (
-                      <Box key={metricKey} sx={{ p: 2 }}>
-                        <Typography>{metricKey}</Typography>
-                        <Typography>No data</Typography>
-                      </Box>
-                    );
-                  }
-                  const chartData = {
-                    labels: arr.map((pt) => pt.step),
-                    datasets: [
-                      {
-                        label: metricKey,
-                        data: arr.map((pt) => pt.value),
-                        borderColor: "#8884d8",
-                        backgroundColor: "#8884d8",
-                      },
-                    ],
-                  };
-                  return (
-                    <Box key={metricKey} sx={{ mb: 3 }}>
-                      <Typography fontWeight="bold" sx={{ mb: 1 }}>
-                        {metricKey}
-                      </Typography>
-                      <Box sx={{ width: "100%", height: 300 }}>
-                        <Line data={chartData} options={getChartOptions(metricKey)} />
-                      </Box>
-                    </Box>
-                  );
-                })
+                <MetricsTabs scalars={scalars} getChartOptions={getChartOptions} />
               )}
             </Paper>
           </Box>

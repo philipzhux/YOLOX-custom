@@ -513,8 +513,9 @@ class Trainer:
 
         if self.rank == 0:
             if self.args.logger == "tensorboard":
-                self.tblogger.add_scalar("val/COCOAP50", ap50, self.epoch + 1)
-                self.tblogger.add_scalar("val/COCOAP50_95", ap50_95, self.epoch + 1)
+                # Base metrics
+                self.tblogger.add_scalar("performance/COCOAP50", ap50, self.epoch + 1)
+                self.tblogger.add_scalar("performance/COCOAP50_95", ap50_95, self.epoch + 1)
                 
                 # Calculate and log additional metrics if summary contains required data
                 if type(summary) is dict and "apr" in summary:
@@ -544,19 +545,20 @@ class Trainer:
                         accuracy = tp / total if total > 0 else 0.0
                         f1_score = 2 * (precision * recall) / (precision + recall + 1e-6)
                         
+                        # Group metrics by prefix
                         # 1. Raw Counts
-                        self.tblogger.add_scalar(f"raw/tp_{cls_name}", tp, self.epoch + 1)
-                        self.tblogger.add_scalar(f"raw/fp_{cls_name}", fp, self.epoch + 1)
-                        self.tblogger.add_scalar(f"raw/fn_{cls_name}", fn, self.epoch + 1)
-                        self.tblogger.add_scalar(f"raw/total_{cls_name}", total, self.epoch + 1)
+                        self.tblogger.add_scalar(f"raw/tp/{cls_name}", tp, self.epoch + 1)
+                        self.tblogger.add_scalar(f"raw/fp/{cls_name}", fp, self.epoch + 1)
+                        self.tblogger.add_scalar(f"raw/fn/{cls_name}", fn, self.epoch + 1)
+                        self.tblogger.add_scalar(f"raw/total/{cls_name}", total, self.epoch + 1)
                         
                         # 2. Performance Metrics
-                        self.tblogger.add_scalar(f"performance/accuracy_{cls_name}", accuracy, self.epoch + 1)
-                        self.tblogger.add_scalar(f"performance/f1_{cls_name}", f1_score, self.epoch + 1)
+                        self.tblogger.add_scalar(f"performance/accuracy/{cls_name}", accuracy, self.epoch + 1)
+                        self.tblogger.add_scalar(f"performance/f1/{cls_name}", f1_score, self.epoch + 1)
                         
                         # 3. TPR (True Positive Rate) related
-                        self.tblogger.add_scalar(f"tpr/recall_{cls_name}", recall, self.epoch + 1)
-                        self.tblogger.add_scalar(f"tpr/precision_{cls_name}", precision, self.epoch + 1)
+                        self.tblogger.add_scalar(f"tpr/recall/{cls_name}", recall, self.epoch + 1)
+                        self.tblogger.add_scalar(f"tpr/precision/{cls_name}", precision, self.epoch + 1)
                     
                     # 4. Fairness Metrics
                     if recalls:
@@ -570,15 +572,16 @@ class Trainer:
                         avg_precision = sum(precisions) / len(precisions)
                         precision_fairness = min_precision / (max_precision + 1e-6)
                         
-                        self.tblogger.add_scalar("fairness/min_recall", min_recall, self.epoch + 1)
-                        self.tblogger.add_scalar("fairness/max_recall", max_recall, self.epoch + 1)
-                        self.tblogger.add_scalar("fairness/avg_recall", avg_recall, self.epoch + 1)
-                        self.tblogger.add_scalar("fairness/recall_ratio", recall_fairness, self.epoch + 1)
+                        # Group fairness metrics
+                        self.tblogger.add_scalar("fairness/recall/min", min_recall, self.epoch + 1)
+                        self.tblogger.add_scalar("fairness/recall/max", max_recall, self.epoch + 1)
+                        self.tblogger.add_scalar("fairness/recall/avg", avg_recall, self.epoch + 1)
+                        self.tblogger.add_scalar("fairness/recall/ratio", recall_fairness, self.epoch + 1)
                         
-                        self.tblogger.add_scalar("fairness/min_precision", min_precision, self.epoch + 1)
-                        self.tblogger.add_scalar("fairness/max_precision", max_precision, self.epoch + 1)
-                        self.tblogger.add_scalar("fairness/avg_precision", avg_precision, self.epoch + 1)
-                        self.tblogger.add_scalar("fairness/precision_ratio", precision_fairness, self.epoch + 1)
+                        self.tblogger.add_scalar("fairness/precision/min", min_precision, self.epoch + 1)
+                        self.tblogger.add_scalar("fairness/precision/max", max_precision, self.epoch + 1)
+                        self.tblogger.add_scalar("fairness/precision/avg", avg_precision, self.epoch + 1)
+                        self.tblogger.add_scalar("fairness/precision/ratio", precision_fairness, self.epoch + 1)
                         
                         # 5. Bias Metrics
                         for cls_name in recall_by_class:
@@ -589,9 +592,9 @@ class Trainer:
                             recall_bias = recall - avg_recall
                             precision_bias = precision - avg_precision
                             
-                            self.tblogger.add_scalar(f"bias/recall_{cls_name}", recall_bias, self.epoch + 1)
-                            self.tblogger.add_scalar(f"bias/precision_{cls_name}", precision_bias, self.epoch + 1)
-                        
+                            self.tblogger.add_scalar(f"bias/recall/{cls_name}", recall_bias, self.epoch + 1)
+                            self.tblogger.add_scalar(f"bias/precision/{cls_name}", precision_bias, self.epoch + 1)
+
                         logger.info(
                             f"\nEpoch {self.epoch + 1} Fairness Metrics:"
                             f"\nRecall - Min: {min_recall:.3f}, Max: {max_recall:.3f}, Avg: {avg_recall:.3f}, Ratio: {recall_fairness:.3f}"
