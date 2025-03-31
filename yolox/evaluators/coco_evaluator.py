@@ -314,22 +314,90 @@ class COCOEvaluator:
             if self.per_class_AR:
                 AR_table = per_class_AR_table(cocoEval, class_names=cat_names)
                 info += "per class AR:\n" + AR_table + "\n"
-            recall_by_class = {}
-            recalls = cocoEval.eval["recall"]
-            # dimension of recalls: [TxKxAxM]
-            # recall has dims (iou, cls, area range, max dets)
-            assert len(cat_names) == recalls.shape[1]
 
+            # Calculate metrics per class
+            recall_by_class = {}
+            precision_by_class = {}
+            scores_by_class = defaultdict(list)
+            tp_fp_metrics = {}
+
+            recalls = cocoEval.eval["recall"]
+            precisions = cocoEval.eval["precision"]
+            scores = cocoEval.eval["scores"]
+            
+            # Get counts from evaluation
+            evalImgs = cocoEval.evalImgs
+            
             for idx, name in enumerate(cat_names):
+                # Calculate recall
                 recall = recalls[:, idx, 0, -1]
                 recall = recall[recall > -1]
                 ar = np.mean(recall) if recall.size else float("nan")
                 recall_by_class[name] = float(ar * 100)
+
+                # Calculate precision
+                precision = precisions[:, :, idx, 0, -1]
+                precision = precision[precision > -1]
+                ap = np.mean(precision) if precision.size else float("nan")
+                precision_by_class[name] = float(ap * 100)
+
+                # Get scores
+                cls_scores = scores[0, :, idx, 0, -1]  # Take first IoU threshold
+                cls_scores = cls_scores[cls_scores > -1]
+                if len(cls_scores) > 0:
+                    scores_by_class[name] = cls_scores.tolist()
+
+                # Calculate TP and FP metrics
+                tp_count = 0
+                fp_count = 0
+                fn_count = 0
+                
+                # Filter evalImgs for this category
+                cat_eval_imgs = [e for e in evalImgs if e is not None and e['category_id'] == cat_ids[idx]]
+                
+                for eval_img in cat_eval_imgs:
+                    dtMatches = eval_img['dtMatches']  # Detection matches
+                    gtMatches = eval_img['gtMatches']  # Ground truth matches
+                    dtIgnore = eval_img['dtIgnore']    # Detections to ignore
+                    
+                    # Count matches at IoU threshold 0 (first threshold)
+                    dt_matches = dtMatches[0]
+                    dt_ignore = dtIgnore[0]
+                    
+                    # True positives: detections that match ground truth
+                    tp_count += np.sum(dt_matches > 0)
+                    
+                    # False positives: detections that don't match ground truth and aren't ignored
+                    fp_count += np.sum((dt_matches == 0) & (dt_ignore == 0))
+                    
+                    # False negatives: ground truth objects that weren't detected
+                    fn_count += np.sum(gtMatches[0] == 0)
+
+                if (tp_count + fn_count) > 0:
+                    tpr = float(tp_count) / float(tp_count + fn_count)
+                else:
+                    tpr = 0.0
+                
+                if (fp_count + tp_count) > 0:
+                    fpr = float(fp_count) / float(fp_count + tp_count)
+                else:
+                    fpr = 0.0
+
+                tp_fp_metrics[name] = {
+                    "true_positives": int(tp_count),
+                    "false_positives": int(fp_count),
+                    "false_negatives": int(fn_count),
+                    "tpr": float(tpr),
+                    "fpr": float(fpr)
+                }
             
             if self.get_apr:
                 return cocoEval.stats[0], cocoEval.stats[1], {
                     "info": info,
-                    "apr": recall_by_class
+                    "apr": recall_by_class,
+                    "precision": precision_by_class,
+                    "scores": scores_by_class,
+                    "tp_fp_metrics": tp_fp_metrics
                 }
             return cocoEval.stats[0], cocoEval.stats[1], info
         else:
