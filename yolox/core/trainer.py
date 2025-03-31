@@ -605,8 +605,8 @@ class Trainer:
                         self.tblogger.add_scalar("fairness/precision/ratio", precision_fairness, self.epoch + 1)
                         
                         # Calculate overall bias metrics
-                        bias_amps = [abs(amp - 1) for amp in [pred_counts[cls] / total_pred / (gt_counts[cls] / total_gt) 
-                                   for cls in gt_counts] if gt_counts[cls] > 0]
+                        bias_amps = [abs(pred_counts[cls_name] / total_pred / (gt_counts[cls_name] / total_gt) - 1)
+                                   for cls_name in gt_counts if gt_counts[cls_name] > 0]
                         if bias_amps:
                             max_bias = max(bias_amps)
                             avg_bias = sum(bias_amps) / len(bias_amps)
