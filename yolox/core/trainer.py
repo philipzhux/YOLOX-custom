@@ -333,12 +333,12 @@ class Trainer:
                 self.lr_scheduler = self.exp.get_lr_scheduler(new_lr, self.max_iter)
                         
             # Update training state
-            updates = {
-                "batch_size": self.args.batch_size,
-                "learning_rate": new_lr
-            }
-            update_json_atomic(self.config_path, updates)
-            update_json_atomic(self.state_path, updates)
+                updates = {
+                    "batch_size": self.args.batch_size,
+                    "learning_rate": new_lr
+                }
+                update_json_atomic(self.config_path, updates)
+                update_json_atomic(self.state_path, updates)
                 
         except Exception as e:
             logger.error(f"Error checking config changes: {e}")
