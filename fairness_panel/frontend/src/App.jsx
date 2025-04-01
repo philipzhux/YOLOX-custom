@@ -366,67 +366,68 @@ function groupMetricsByPrefix(scalars) {
 // Create a new MetricsTabs component
 function MetricsTabs({ scalars, getChartOptions }) {
   const [currentTab, setCurrentTab] = useState(0);
-  const groups = Object.keys(scalars);
+  const groups = Object.keys(scalars).filter(group => group !== 'radar');
   
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
   };
 
+  const renderRadarChart = () => {
+    const radarData = scalars.radar;
+    if (!radarData || !radarData.is_radar) return null;
+    
+    // Get latest values for each metric
+    const lastValues = {};
+    Object.entries(radarData.values).forEach(([metricName, values]) => {
+      if (values.length > 0) {
+        // Sort by step and get the latest value
+        const sortedValues = [...values].sort((a, b) => a.step - b.step);
+        lastValues[metricName] = sortedValues[sortedValues.length - 1].value;
+      }
+    });
+
+    const chartData = {
+      labels: Object.keys(lastValues).map(key => 
+        key.charAt(0).toUpperCase() + key.slice(1)
+      ),
+      datasets: [{
+        label: 'Latest Metrics',
+        data: Object.values(lastValues),
+        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+        borderColor: 'rgba(255, 99, 132, 1)',
+        borderWidth: 1,
+      }]
+    };
+
+    const options = {
+      scales: {
+        r: {
+          beginAtZero: true,
+          suggestedMax: Math.max(...Object.values(lastValues)) * 1.2,
+        }
+      },
+      plugins: {
+        title: {
+          display: true,
+          text: 'Multi-Metric Overview (Latest Epoch)'
+        }
+      }
+    };
+
+    return (
+      <Box sx={{ mb: 4, mt: 2 }}>
+        <Typography variant="h6" fontWeight="bold" sx={{ mb: 2 }}>
+          Multi-Metric Radar
+        </Typography>
+        <Box sx={{ height: 400, width: '100%' }}>
+          <Radar data={chartData} options={options} />
+        </Box>
+      </Box>
+    );
+  };
+
   const renderMetricCharts = (metrics) => {
     return Object.entries(metrics).map(([metricKey, data]) => {
-      // Handle fairness radar chart
-      if (data.is_radar) {
-        // Get latest values for each metric
-        const lastValues = {};
-        Object.entries(data.values).forEach(([metric, values]) => {
-          if (values.length > 0) {
-            lastValues[metric.split('/').pop()] = values[values.length - 1].value;
-          }
-        });
-
-        const radarData = {
-          labels: Object.keys(lastValues),
-          datasets: [{
-            label: 'Fairness Metrics',
-            data: Object.values(lastValues),
-            backgroundColor: 'rgba(255, 99, 132, 0.2)',
-            borderColor: 'rgba(255, 99, 132, 1)',
-            borderWidth: 1,
-          }]
-        };
-
-        const radarOptions = {
-          scales: {
-            r: {
-              beginAtZero: true,
-              suggestedMax: Math.max(...Object.values(lastValues)) * 1.2,
-            }
-          },
-          plugins: {
-            legend: {
-              display: true,
-              position: 'top',
-            },
-            title: {
-              display: true,
-              text: 'Fairness Overview'
-            }
-          }
-        };
-
-        return (
-          <Box key={metricKey} sx={{ mb: 3 }}>
-            <Typography fontWeight="bold" sx={{ mb: 1 }}>
-              Fairness Metrics Radar
-            </Typography>
-            <Box sx={{ height: 300, width: '100%' }}>
-              <Radar data={radarData} options={radarOptions} />
-            </Box>
-          </Box>
-        );
-      }
-
-      // Regular line chart for other metrics
       if (!Array.isArray(data) || data.length === 0) {
         return (
           <Box key={metricKey} sx={{ p: 2 }}>
@@ -461,6 +462,9 @@ function MetricsTabs({ scalars, getChartOptions }) {
 
   return (
     <Box sx={{ width: '100%' }}>
+      {/* Always show radar chart at the top */}
+      {renderRadarChart()}
+      
       <Tabs 
         value={currentTab} 
         onChange={handleTabChange}
@@ -469,7 +473,10 @@ function MetricsTabs({ scalars, getChartOptions }) {
         sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
       >
         {groups.map((group, index) => (
-          <Tab key={group} label={group.charAt(0).toUpperCase() + group.slice(1)} />
+          <Tab 
+            key={group} 
+            label={group.charAt(0).toUpperCase() + group.slice(1)} 
+          />
         ))}
       </Tabs>
 

@@ -532,6 +532,11 @@ class Trainer:
                     total_gt = 0
                     total_pred = 0
                     
+                    # Overall metrics (not per-class)
+                    total_tp = 0
+                    total_fp = 0
+                    total_fn = 0
+                    
                     for cls_name in recall_by_class:
                         # Get base metrics
                         recall = recall_by_class[cls_name]
@@ -544,6 +549,11 @@ class Trainer:
                         tp = cls_metrics.get("true_positives", 0)
                         fp = cls_metrics.get("false_positives", 0)
                         fn = cls_metrics.get("false_negatives", 0)
+                        
+                        # Accumulate totals
+                        total_tp += tp
+                        total_fp += fp
+                        total_fn += fn
                         
                         # For bias amplification calculation
                         gt_count = tp + fn
@@ -581,6 +591,17 @@ class Trainer:
                         self.tblogger.add_scalar(f"distribution/pred_ratio/{cls_name}", pred_ratio, self.epoch + 1)
                         self.tblogger.add_scalar(f"bias/amplification/{cls_name}", bias_amp, self.epoch + 1)
                     
+                    # Calculate overall metrics (not per-class)
+                    total_samples = total_tp + total_fp + total_fn
+                    overall_accuracy = total_tp / total_samples if total_samples > 0 else 0
+                    overall_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
+                    overall_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+                    
+                    # Log overall metrics for the radar chart
+                    self.tblogger.add_scalar("performance/accuracy", overall_accuracy, self.epoch + 1)
+                    self.tblogger.add_scalar("tpr/precision", overall_precision, self.epoch + 1)
+                    self.tblogger.add_scalar("tpr/recall", overall_recall, self.epoch + 1)
+                    
                     # 5. Fairness Metrics
                     if recalls:
                         min_recall = min(recalls)
@@ -592,6 +613,14 @@ class Trainer:
                         max_precision = max(precisions)
                         avg_precision = sum(precisions) / len(precisions)
                         precision_fairness = min_precision / (max_precision + 1e-6)
+                        
+                        # Calculate a single fairness metric (higher is better)
+                        # Combine recall fairness, precision fairness, and bias metrics
+                        # Scale to [0-1] where 1 is perfect fairness
+                        fairness_score = (recall_fairness + precision_fairness) / 2
+                        
+                        # Log the single fairness metric
+                        self.tblogger.add_scalar("fairness/score", fairness_score, self.epoch + 1)
                         
                         # Group fairness metrics
                         self.tblogger.add_scalar("fairness/recall/min", min_recall, self.epoch + 1)
@@ -615,6 +644,7 @@ class Trainer:
 
                         logger.info(
                             f"\nEpoch {self.epoch + 1} Metrics:"
+                            f"\nOverall - Accuracy: {overall_accuracy:.3f}, Precision: {overall_precision:.3f}, Recall: {overall_recall:.3f}"
                             f"\nFairness - Recall Min: {min_recall:.3f}, Max: {max_recall:.3f}, Ratio: {recall_fairness:.3f}"
                             f"\nFairness - Precision Min: {min_precision:.3f}, Max: {max_precision:.3f}, Ratio: {precision_fairness:.3f}"
                             f"\nBias - Max Amplification: {max_bias:.3f}, Avg Amplification: {avg_bias:.3f}"

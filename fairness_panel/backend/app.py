@@ -25,12 +25,38 @@ LOG_DIR = os.getenv("LOG_DIR", "/home/chenz1/toorange/TBtest/YOLOX/YOLOX_outputs
 # Track processed event files
 processed_mtimes = {}
 
-# Define metrics for the fairness radar chart
-FAIRNESS_METRICS = [
-    'bias/avg_amplification',
-    'fairness/recall/ratio',
-    'fairness/precision/avg'
-]
+# Define metric groups
+METRIC_GROUPS = {
+    'system': [
+        'cls_loss', 
+        'conf_loss', 
+        'iou_loss', 
+        'l1_loss', 
+        'lr', 
+        'total_loss',
+        'performance/COCOAP50', 
+        'performance/COCOAP50_95',
+    ],
+    'fairness': [
+        'fairness/recall/ratio',
+        'fairness/precision/ratio'
+    ],
+    'tpr': [
+        'tpr/recall/female', 
+        'tpr/recall/male', 
+        'performance/accuracy',
+        'tpr/precision',
+        'tpr/recall'
+    ]
+}
+
+# Define metrics for the radar chart
+RADAR_METRICS = {
+    'accuracy': 'performance/accuracy',
+    'precision': 'tpr/precision',
+    'fairness': 'fairness/score',  # Use the new combined fairness score
+    'bias': 'bias/avg_amplification'
+}
 
 def get_event_files():
     """Get all tensorboard event files sorted by modification time"""
@@ -139,53 +165,65 @@ if not os.path.exists(STATE_FILE):
 
 def parse_tensorboard_logs(log_dir):
     """Parse and group tensorboard logs"""
-    grouped_data = {}
-    fairness_radar_data = {
-        'steps': [],
-        'values': {metric: [] for metric in FAIRNESS_METRICS}
+    # Initialize data structures
+    grouped_data = {
+        'system': {},
+        'fairness': {},
+        'tpr': {},
+        'other': {}  # For metrics that don't match any defined group
     }
     
+    # For radar chart - track latest values
+    radar_data = {
+        'steps': [],
+        'values': {metric_name: [] for metric_name in RADAR_METRICS.keys()}
+    }
+    
+    # Process tensorboard logs
     for root, _, files in os.walk(log_dir):
         for file in files:
             if "events.out.tfevents" in file:
                 file_path = os.path.join(root, file)
                 for event in summary_iterator(file_path):
                     for value in event.summary.value:
-                        parts = value.tag.split('/')
-                        group = parts[0]
+                        tag = value.tag.lower()  # Case-insensitive matching
                         
-                        # Special handling for fairness radar metrics
-                        if value.tag in FAIRNESS_METRICS:
-                            if event.step not in fairness_radar_data['steps']:
-                                fairness_radar_data['steps'].append(event.step)
-                            fairness_radar_data['values'][value.tag].append({
-                                'step': event.step,
-                                'value': value.simple_value
-                            })
+                        # Determine which group this metric belongs to
+                        assigned_group = 'other'
+                        for group, metrics in METRIC_GROUPS.items():
+                            if any(metric.lower() in tag.lower() for metric in metrics):
+                                assigned_group = group
+                                break
                         
-                        # Regular grouping for other metrics
-                        if group not in grouped_data:
-                            grouped_data[group] = {}
+                        # Add to the appropriate group
+                        if value.tag not in grouped_data[assigned_group]:
+                            grouped_data[assigned_group][value.tag] = []
                         
-                        if value.tag not in grouped_data[group]:
-                            grouped_data[group][value.tag] = []
-                        
-                        grouped_data[group][value.tag].append({
+                        grouped_data[assigned_group][value.tag].append({
                             "step": event.step,
                             "value": value.simple_value
                         })
+                        
+                        # Check if this is a radar metric
+                        for radar_name, metric_pattern in RADAR_METRICS.items():
+                            if metric_pattern.lower() in tag.lower():
+                                if event.step not in radar_data['steps']:
+                                    radar_data['steps'].append(event.step)
+                                radar_data['values'][radar_name].append({
+                                    'step': event.step,
+                                    'value': value.simple_value
+                                })
     
-    # Sort regular metrics by step
+    # Sort each metric's data by step
     for group in grouped_data.values():
         for metric in group:
             group[metric].sort(key=lambda x: x["step"])
     
-    # Add fairness radar data to grouped data
-    grouped_data['fairness_radar'] = {
+    # Add radar chart data
+    grouped_data['radar'] = {
         'is_radar': True,
-        'metrics': FAIRNESS_METRICS,
-        'steps': sorted(fairness_radar_data['steps']),
-        'values': fairness_radar_data['values']
+        'steps': sorted(radar_data['steps']),
+        'values': radar_data['values']
     }
     
     return grouped_data
